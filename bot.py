@@ -39,8 +39,8 @@ async def on_ready():
         print(f"Synced {len(synced)} commands.")
     except Exception as e:
         print(f"Failed to sync commands: {e}")
-    # Set status to 'Watching over Democracy' (no emoji)
-    activity = discord.Activity(type=discord.ActivityType.watching, name="over Democracy")
+    # Set status to 'Virginia Politics'
+    activity = discord.Activity(type=discord.ActivityType.custom, name="Virginia Politics")
     await bot.change_presence(status=discord.Status.online, activity=activity)
 
 mod_channel_id = os.getenv("MOD_CHANNEL_ID")
