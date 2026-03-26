@@ -5,8 +5,15 @@ from dotenv import load_dotenv
 import asyncio
 import openai
 
+print("Starting bot...")
 load_dotenv()
 TOKEN = os.getenv("DISCORD_TOKEN")
+
+if not TOKEN:
+    print("Error: DISCORD_TOKEN not found in environment variables")
+    exit(1)
+
+print("Discord token found, initializing bot...")
 
 intents = discord.Intents.default()
 intents.message_content = True
@@ -18,7 +25,11 @@ bot = commands.Bot(command_prefix="!", intents=intents)
 async def load_cogs():
     for filename in os.listdir("./cogs"):
         if filename.endswith(".py"):
-            await bot.load_extension(f"cogs.{filename[:-3]}")
+            try:
+                await bot.load_extension(f"cogs.{filename[:-3]}")
+                print(f"Loaded cog: {filename[:-3]}")
+            except Exception as e:
+                print(f"Failed to load cog {filename[:-3]}: {e}")
 
 @bot.event
 async def on_ready():
@@ -34,9 +45,13 @@ async def on_ready():
 
 mod_channel_id = os.getenv("MOD_CHANNEL_ID")
 if mod_channel_id is not None:
-    mod_channel_id = int(mod_channel_id)
+    try:
+        mod_channel_id = int(mod_channel_id)
+    except ValueError:
+        print("Warning: MOD_CHANNEL_ID is not a valid integer")
+        mod_channel_id = None
 else:
-    print("Warning: MOD_CHANNEL_ID not set in .env file.")
+    print("Warning: MOD_CHANNEL_ID not set in environment variables.")
 
 async def main():
     async with bot:

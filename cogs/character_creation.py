@@ -7,20 +7,27 @@ import firebase_admin
 from firebase_admin import credentials, firestore
 
 load_dotenv()
-MOD_CHANNEL_ID = int(os.getenv("MOD_CHANNEL_ID"))
+MOD_CHANNEL_ID_STR = os.getenv("MOD_CHANNEL_ID")
+MOD_CHANNEL_ID = int(MOD_CHANNEL_ID_STR) if MOD_CHANNEL_ID_STR else None
 
 # Firebase initialization (run once per process)
 FIREBASE_CRED_JSON = os.getenv("FIREBASE_CRED_JSON")
 FIREBASE_PROJECT_ID = os.getenv("FIREBASE_PROJECT_ID")
-if FIREBASE_CRED_JSON and not firebase_admin._apps:
-    import json
-    cred_dict = json.loads(FIREBASE_CRED_JSON)
-    cred = credentials.Certificate(cred_dict)
-    firebase_admin.initialize_app(cred, {
-        'projectId': FIREBASE_PROJECT_ID
-    })
-    db = firestore.client()
+if FIREBASE_CRED_JSON and FIREBASE_PROJECT_ID and not firebase_admin._apps:
+    try:
+        import json
+        cred_dict = json.loads(FIREBASE_CRED_JSON)
+        cred = credentials.Certificate(cred_dict)
+        firebase_admin.initialize_app(cred, {
+            'projectId': FIREBASE_PROJECT_ID
+        })
+        db = firestore.client()
+        print("Firebase initialized successfully")
+    except Exception as e:
+        print(f"Failed to initialize Firebase: {e}")
+        db = None
 else:
+    print("Firebase credentials not provided, skipping initialization")
     db = None
 
 class Character(commands.Cog):
@@ -49,7 +56,7 @@ class Character(commands.Cog):
                 ("gender", "Gender", None, True),
                 ("party", "Political Party", None, True),
                 ("bio", "Character Biography", "Tell us about your character’s upbringing, education, and political experience.", True),
-                ("role", "What position are you planning to apply for?", "e.g. Press Secretary, Secretary of Education", True),
+                ("role", "What position are you planning to apply for?", "e.g. Governor, House of Delegates", True),
                 ("roblox_id", "Roblox User ID", "e.g 1234567890", True)
             ]
             answers = {}
@@ -230,11 +237,11 @@ class Character(commands.Cog):
                 @discord.ui.button(label="Submit", style=discord.ButtonStyle.success)
                 async def submit(self, interaction_button: discord.Interaction, button: discord.ui.Button):
                     self.submitted = True
-                    await interaction_button.response.send_message(embed=discord.Embed(description="**Character Creation & Whitelist Application**\n\n✅ Your character has been submitted for review!", color=0x1F3C72), ephemeral=True)
+                    await interaction_button.response.send_message(embed=discord.Embed(description="**Character Creation & Whitelist Application**\n\n✅ Your character has been submitted for review!", color=0x1F3C72))
                     self.stop()
                 @discord.ui.button(label="Cancel", style=discord.ButtonStyle.danger)
                 async def cancel(self, interaction_button: discord.Interaction, button: discord.ui.Button):
-                    await interaction_button.response.send_message(embed=discord.Embed(description="**Character Creation & Whitelist Application**\n\n❌ Submission cancelled.", color=0x1F3C72), ephemeral=True)
+                    await interaction_button.response.send_message(embed=discord.Embed(description="**Character Creation & Whitelist Application**\n\n❌ Submission cancelled.", color=0x1F3C72))
                     self.stop()
             review_view = ReviewView()
             await user.send(embed=review_embed, view=review_view)
@@ -338,13 +345,14 @@ class Character(commands.Cog):
                 mod_embed.set_image(url=portrait_url)
             mod_channel = self.bot.get_channel(MOD_CHANNEL_ID)
             if mod_channel:
-                message = await mod_channel.send(content=user.mention, embed=mod_embed)
-                # Add admin panel buttons for approve/deny
-                class AdminPanel(discord.ui.View):
-                    def __init__(self, user_id, message_id, timeout=604800):  # 7 days
-                        super().__init__(timeout=timeout)
-                        self.user_id = user_id
-                        self.message_id = message_id
+                try:
+                    message = await mod_channel.send(content=user.mention, embed=mod_embed)
+                    # Add admin panel buttons for approve/deny
+                    class AdminPanel(discord.ui.View):
+                        def __init__(self, user_id, message_id, timeout=604800):  # 7 days
+                            super().__init__(timeout=timeout)
+                            self.user_id = user_id
+                            self.message_id = message_id
                     @discord.ui.button(label="Approve", style=discord.ButtonStyle.success)
                     async def approve(self, interaction: discord.Interaction, button: discord.ui.Button):
                         # Only allow admins to approve/deny
@@ -417,22 +425,29 @@ class Character(commands.Cog):
                             print(f"[DM ERROR] Could not DM user: {dm_exc}")
                         await interaction.response.send_message("Application denied and user notified.", ephemeral=True)
                         await interaction.message.edit(view=None)
-                admin_panel = AdminPanel(user.id, message.id)
-                await message.edit(view=admin_panel)
-                # Send success message to user after submission
-                success_embed = discord.Embed(
-                    title="Successfully Submitted",
-                    description=(
-                        "Your application has been successfully submitted to our panel of administrators. "
-                        "Please allow up to 3 business days for careful review of your character.\n\n"
-                        "In the meantime, feel free to check out the rest of the channels available for you at this time. "
-                        "It is required that you review and agree to our <#1338209799505973399> as a member of the community. "
-                        "Learn more about our commmunities mission in <#1338209811128516802> or our history in <#1338209804849643560>. "
-                        "Your cooperation is appreciated."
-                    ),
-                    color=0x2ECC71
-                )
-                await user.send(embed=success_embed)
+                    admin_panel = AdminPanel(user.id, message.id)
+                    await message.edit(view=admin_panel)
+                    # Send success message to user after submission
+                    success_embed = discord.Embed(
+                        title="Successfully Submitted",
+                        description=(
+                            "Your application has been successfully submitted to our panel of administrators. "
+                            "Please allow up to 3 business days for careful review of your character.\n\n"
+                            "In the meantime, feel free to check out the rest of the channels available for you at this time. "
+                            "It is required that you review and agree to our <#1338209799505973399> as a member of the community. "
+                            "Learn more about our commmunities mission in <#1338209811128516802> or our history in <#1338209804849643560>. "
+                            "Your cooperation is appreciated."
+                        ),
+                        color=0x2ECC71
+                    )
+                    await user.send(embed=success_embed)
+                except Exception as e:
+                    print(f"Error sending to mod channel: {e}")
+                    error_embed = discord.Embed(
+                        description=f"**Character Creation & Whitelist Application**\n\n❌ There was an error submitting to mod channel: {str(e)}",
+                        color=0x1F3C72
+                    )
+                    await user.send(embed=error_embed)
             else:
                 error_embed = discord.Embed(
                     description="**Character Creation & Whitelist Application**\n\n⚠️ Mod channel not found! Please check the channel ID.",
