@@ -83,7 +83,7 @@ Write a headline and a concise, informative news article for the State of Virgin
                 lambda: client.chat.completions.create(
                     model=options.get('model', 'gpt-5.4-mini-2026-03-17'),
                     messages=[{"role": "system", "content": prompt}],
-                    max_tokens=options.get('max_tokens', 600),
+                    max_completion_tokens=options.get('max_tokens', 600),
                     temperature=options.get('temperature', 0.7),
                 )
             )
