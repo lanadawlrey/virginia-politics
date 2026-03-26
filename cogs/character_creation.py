@@ -562,3 +562,6 @@ class Character(commands.Cog):
 
         except Exception as e:
             await interaction.response.send_message(f"Error retrieving pending applications: {e}", ephemeral=True)
+
+async def setup(bot):
+    await bot.add_cog(Character(bot))
