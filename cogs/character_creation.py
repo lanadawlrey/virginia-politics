@@ -346,96 +346,157 @@ class Character(commands.Cog):
             mod_channel = self.bot.get_channel(MOD_CHANNEL_ID)
             if mod_channel:
                 try:
-                    message = await mod_channel.send(content=user.mention, embed=mod_embed)
+                    # Store application data in pending collection first
+                    pending_data = dict(answers)
+                    pending_data.update({
+                        'discord_id': str(user.id),
+                        'submitted_at': firestore.SERVER_TIMESTAMP,
+                        'user_mention': user.mention,
+                        'username': user.display_name
+                    })
+                    if portrait_url:
+                        pending_data['portrait_url'] = portrait_url
+
+                    # Save to pending applications collection
+                    if db:
+                        try:
+                            pending_ref = db.collection('pending_applications').document(str(user.id))
+                            pending_ref.set(pending_data)
+                            print(f"✅ Application saved to pending collection for user {user.id}")
+                        except Exception as e:
+                            print(f"❌ Failed to save pending application: {e}")
+                    else:
+                        print("⚠️ Firebase not available, application not saved to database")
+
+                    # Create embed for mod review
+                    mod_embed = discord.Embed(
+                        title="🗳️ Pending Character Application",
+                        description=f"**New application from {user.mention}**\n\nPlease review the application below and decide whether to approve or deny.",
+                        color=0x1F3C72
+                    )
+                    mod_embed.add_field(name="Full Legal Name", value=answers["full_name"], inline=False)
+                    mod_embed.add_field(name="Date of Birth (MM/DD/YYYY)", value=answers["dob"], inline=True)
+                    mod_embed.add_field(name="County", value=answers["county"], inline=True)
+                    mod_embed.add_field(name="House District", value=answers["house"], inline=True)
+                    mod_embed.add_field(name="Senate District", value=answers["senate"], inline=True)
+                    mod_embed.add_field(name="Gender", value=answers["gender"], inline=True)
+                    mod_embed.add_field(name="Political Party", value=answers["party"], inline=True)
+                    # Truncate biography if too long for Discord embed field
+                    bio_value = answers["bio"]
+                    if len(bio_value) > 1024:
+                        bio_value = bio_value[:1021] + "..."
+                    mod_embed.add_field(name="Character Biography", value=bio_value, inline=False)
+                    mod_embed.add_field(name="Position Applied For", value=answers["role"], inline=True)
+                    mod_embed.add_field(name="Roblox User ID", value=answers["roblox_id"], inline=True)
+                    mod_embed.add_field(name="Fictional SSN", value=ssn, inline=True)
+                    mod_embed.set_footer(text=f"Submitted by {user.display_name}")
+                    if portrait_url:
+                        mod_embed.set_image(url=portrait_url)
+
+                    message = await mod_channel.send(embed=mod_embed)
                     # Add admin panel buttons for approve/deny
                     class AdminPanel(discord.ui.View):
                         def __init__(self, user_id, message_id, timeout=604800):  # 7 days
                             super().__init__(timeout=timeout)
                             self.user_id = user_id
                             self.message_id = message_id
-                    @discord.ui.button(label="Approve", style=discord.ButtonStyle.success)
-                    async def approve(self, interaction: discord.Interaction, button: discord.ui.Button):
-                        # Only allow admins to approve/deny
-                        if not interaction.user.guild_permissions.manage_guild:
-                            await interaction.response.send_message("You do not have permission to approve.", ephemeral=True)
-                            return
-                        guild = interaction.guild
-                        member = guild.get_member(self.user_id)
-                        # --- FIX: Always fetch member if not found in cache ---
-                        if member is None:
-                            try:
-                                member = await guild.fetch_member(self.user_id)
-                            except Exception as fetch_exc:
-                                print(f"[FETCH MEMBER ERROR] Could not fetch member: {fetch_exc}")
-                                member = None
-                        # --- END FIX ---
-                        if member:
-                            role = guild.get_role(1338209827330986046)
-                            if role:
-                                await member.add_roles(role, reason="Character application approved")
-                        try:
+                        @discord.ui.button(label="Approve", style=discord.ButtonStyle.success)
+                        async def approve(self, interaction: discord.Interaction, button: discord.ui.Button):
+                            # Only allow admins to approve/deny
+                            if not interaction.user.guild_permissions.manage_guild:
+                                await interaction.response.send_message("You do not have permission to approve.", ephemeral=True)
+                                return
+                            guild = interaction.guild
+                            member = guild.get_member(self.user_id)
+                            # --- FIX: Always fetch member if not found in cache ---
+                            if member is None:
+                                try:
+                                    member = await guild.fetch_member(self.user_id)
+                                except Exception as fetch_exc:
+                                    print(f"[FETCH MEMBER ERROR] Could not fetch member: {fetch_exc}")
+                                    member = None
+                            # --- END FIX ---
                             if member:
-                                await member.send(embed=discord.Embed(
-                                    title="Application Approved",
-                                    description="Congratulations! Your character application has been approved and you have been whitelisted. Welcome aboard!",
-                                    color=0x2ECC71
-                                ))
-                        except Exception as dm_exc:
-                            print(f"[DM ERROR] Could not DM user: {dm_exc}")
-                        # Upload character data to Firebase Firestore
-                        if db:
+                                role = guild.get_role(1338209827330986046)
+                                if role:
+                                    await member.add_roles(role, reason="Character application approved")
                             try:
-                                character_data = dict(answers)
-                                character_data.update({
-                                    'discord_id': str(self.user_id),
-                                    'approved_at': firestore.SERVER_TIMESTAMP,
-                                    'mod_message_id': str(self.message_id),
-                                    'ssn': ssn  # Add formatted SSN to Firestore
-                                })
-                                if portrait_url:
-                                    character_data['portrait_url'] = portrait_url  # Add portrait image link as text
-                                db.collection('characters').document(str(self.user_id)).set(character_data)
-                            except Exception as firebase_exc:
-                                print(f"[FIREBASE ERROR] {firebase_exc}")
-                        await interaction.response.send_message("Application approved, user notified, and data uploaded to Firebase.", ephemeral=True)
-                        await interaction.message.edit(view=None)
-                    @discord.ui.button(label="Deny", style=discord.ButtonStyle.danger)
-                    async def deny(self, interaction: discord.Interaction, button: discord.ui.Button):
-                        if not interaction.user.guild_permissions.manage_guild:
-                            await interaction.response.send_message("You do not have permission to deny.", ephemeral=True)
-                            return
-                        guild = interaction.guild
-                        member = guild.get_member(self.user_id)
-                        # --- FIX: Always fetch member if not found in cache ---
-                        if member is None:
+                                if member:
+                                    await member.send(embed=discord.Embed(
+                                        title="Application Approved",
+                                        description="Congratulations! Your character application has been approved and you have been whitelisted. Welcome aboard!",
+                                        color=0x2ECC71
+                                    ))
+                            except Exception as dm_exc:
+                                print(f"[DM ERROR] Could not DM user: {dm_exc}")
+                            # Move from pending to approved collection
+                            if db:
+                                try:
+                                    pending_ref = db.collection('pending_applications').document(str(self.user_id))
+                                    pending_doc = pending_ref.get()
+                                    if pending_doc.exists:
+                                        character_data = pending_doc.to_dict()
+                                        # Update with approval info
+                                        character_data.update({
+                                            'approved_at': firestore.SERVER_TIMESTAMP,
+                                            'approved_by': str(interaction.user.id),
+                                            'mod_message_id': str(self.message_id),
+                                            'ssn': ssn  # Add formatted SSN to Firestore
+                                        })
+                                        # Move to main characters collection
+                                        db.collection('characters').document(str(self.user_id)).set(character_data)
+                                        # Delete from pending
+                                        pending_ref.delete()
+                                        print(f"✅ Application moved to characters collection for user {self.user_id}")
+                                except Exception as firebase_exc:
+                                    print(f"[FIREBASE ERROR] {firebase_exc}")
+                            await interaction.response.send_message("Application approved, user notified, and data moved to Firebase.", ephemeral=True)
+                            await interaction.message.edit(view=None)
+                        @discord.ui.button(label="Deny", style=discord.ButtonStyle.danger)
+                        async def deny(self, interaction: discord.Interaction, button: discord.ui.Button):
+                            if not interaction.user.guild_permissions.manage_guild:
+                                await interaction.response.send_message("You do not have permission to deny.", ephemeral=True)
+                                return
+                            guild = interaction.guild
+                            member = guild.get_member(self.user_id)
+                            # --- FIX: Always fetch member if not found in cache ---
+                            if member is None:
+                                try:
+                                    member = await guild.fetch_member(self.user_id)
+                                except Exception as fetch_exc:
+                                    print(f"[FETCH MEMBER ERROR] Could not fetch member: {fetch_exc}")
+                                    member = None
+                            # --- END FIX ---
                             try:
-                                member = await guild.fetch_member(self.user_id)
-                            except Exception as fetch_exc:
-                                print(f"[FETCH MEMBER ERROR] Could not fetch member: {fetch_exc}")
-                                member = None
-                        # --- END FIX ---
-                        try:
-                            if member:
-                                await member.send(embed=discord.Embed(
-                                    title="Application Denied",
-                                    description="Your character application has been denied. Please await further messaging from an administrator for more information.",
-                                    color=0xE74C3C
-                                ))
-                        except Exception as dm_exc:
-                            print(f"[DM ERROR] Could not DM user: {dm_exc}")
-                        await interaction.response.send_message("Application denied and user notified.", ephemeral=True)
-                        await interaction.message.edit(view=None)
+                                if member:
+                                    await member.send(embed=discord.Embed(
+                                        title="Application Denied",
+                                        description="Your character application has been denied. Please await further messaging from an administrator for more information.",
+                                        color=0xE74C3C
+                                    ))
+                            except Exception as dm_exc:
+                                print(f"[DM ERROR] Could not DM user: {dm_exc}")
+                            # Delete from pending applications
+                            if db:
+                                try:
+                                    pending_ref = db.collection('pending_applications').document(str(self.user_id))
+                                    pending_ref.delete()
+                                    print(f"✅ Pending application deleted for user {self.user_id}")
+                                except Exception as firebase_exc:
+                                    print(f"[FIREBASE ERROR] {firebase_exc}")
+                            await interaction.response.send_message("Application denied and user notified.", ephemeral=True)
+                            await interaction.message.edit(view=None)
                     admin_panel = AdminPanel(user.id, message.id)
                     await message.edit(view=admin_panel)
                     # Send success message to user after submission
                     success_embed = discord.Embed(
-                        title="Successfully Submitted",
+                        title="Application Submitted for Review",
                         description=(
-                            "Your application has been successfully submitted to our panel of administrators. "
+                            "Your character application has been successfully submitted and is now pending review by our administrators. "
                             "Please allow up to 3 business days for careful review of your character.\n\n"
                             "In the meantime, feel free to check out the rest of the channels available for you at this time. "
-                            "It is required that you review and agree to our <#1338209799505973399> as a member of the community. "
-                            "Learn more about our commmunities mission in <#1338209811128516802> or our history in <#1338209804849643560>. "
+                            "It is required that you review and agree to our <#1486597519504048301> as a member of the community. "
+                            "Learn more about our commmunities mission in <#1486597519504048302> or our history in <#1486597519504048304>. "
                             "Your cooperation is appreciated."
                         ),
                         color=0x2ECC71
@@ -465,5 +526,39 @@ class Character(commands.Cog):
                 pass
             print(f"Error in DM character creation: {e}")
 
-async def setup(bot):
-    await bot.add_cog(Character(bot))
+    @app_commands.command(name="pending_apps", description="View pending character applications (Admin only)")
+    @app_commands.checks.has_permissions(manage_guild=True)
+    async def pending_apps(self, interaction: discord.Interaction):
+        """View all pending character applications"""
+        if not db:
+            await interaction.response.send_message("Database not available.", ephemeral=True)
+            return
+
+        try:
+            pending_ref = db.collection('pending_applications')
+            pending_docs = pending_ref.stream()
+
+            pending_list = []
+            for doc in pending_docs:
+                data = doc.to_dict()
+                pending_list.append(f"• {data.get('username', 'Unknown')} ({doc.id}) - Submitted {data.get('submitted_at', 'Unknown time')}")
+
+            if not pending_list:
+                embed = discord.Embed(
+                    title="Pending Applications",
+                    description="No pending applications at this time.",
+                    color=0x1F3C72
+                )
+            else:
+                embed = discord.Embed(
+                    title="Pending Applications",
+                    description="\n".join(pending_list[:10]),  # Limit to 10 for embed size
+                    color=0x1F3C72
+                )
+                if len(pending_list) > 10:
+                    embed.set_footer(text=f"And {len(pending_list) - 10} more...")
+
+            await interaction.response.send_message(embed=embed, ephemeral=True)
+
+        except Exception as e:
+            await interaction.response.send_message(f"Error retrieving pending applications: {e}", ephemeral=True)

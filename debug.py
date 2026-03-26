@@ -58,4 +58,34 @@ try:
 except ImportError as e:
     print(f"❌ openai: {e}")
 
+# Test Firebase initialization and connectivity
+firebase_json = os.getenv('FIREBASE_CRED_JSON')
+firebase_project = os.getenv('FIREBASE_PROJECT_ID')
+
+if firebase_json and firebase_project:
+    try:
+        import json
+        from firebase_admin import credentials, firestore
+        cred_dict = json.loads(firebase_json)
+        cred = credentials.Certificate(cred_dict)
+        firebase_admin.initialize_app(cred, {
+            'projectId': firebase_project
+        })
+        db = firestore.client()
+        print("✅ Firebase initialized successfully")
+        
+        # Test a simple write
+        test_ref = db.collection('test').document('connection_test')
+        test_ref.set({'test': True, 'timestamp': firestore.SERVER_TIMESTAMP})
+        print("✅ Firebase write test successful")
+        
+        # Clean up test
+        test_ref.delete()
+        print("✅ Firebase delete test successful")
+        
+    except Exception as e:
+        print(f"❌ Firebase test failed: {e}")
+else:
+    print("❌ Firebase credentials not available for testing")
+
 print("\n=== Debug Complete ===")
