@@ -54,7 +54,7 @@ class Roleplay(commands.Cog):
         }
         options = {
             "tone": "serious and journalistic",
-            "model": "gpt-4-1106-preview",
+            "model": "gpt-5.4-mini-2026-03-17",
             "max_tokens": 600,
             "temperature": 0.7
         }
@@ -81,7 +81,7 @@ Write a headline and a concise, informative news article for the State of Virgin
             response = await self.bot.loop.run_in_executor(
                 None,
                 lambda: client.chat.completions.create(
-                    model=options.get('model', 'gpt-4-1106-preview'),
+                    model=options.get('model', 'gpt-5.4-mini-2026-03-17'),
                     messages=[{"role": "system", "content": prompt}],
                     max_tokens=options.get('max_tokens', 600),
                     temperature=options.get('temperature', 0.7),
