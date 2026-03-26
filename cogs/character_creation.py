@@ -31,13 +31,98 @@ if FIREBASE_CRED_JSON and FIREBASE_PROJECT_ID:
 else:
     print("Firebase credentials not provided, skipping initialization")
 
+FORUM_CHANNEL_ID = 1486818607575863417
+
+async def update_forum_thread(bot, user_id, character_data):
+    """Update the forum thread embed with current character data"""
+    try:
+        if not db:
+            return
+        
+        # Get character document to find forum thread ID
+        character_ref = db.collection('characters').document(str(user_id))
+        character_doc = character_ref.get()
+        
+        if not character_doc.exists:
+            return
+        
+        char_data = character_doc.to_dict()
+        forum_thread_id = char_data.get('forum_thread_id')
+        
+        if not forum_thread_id:
+            return
+        
+        # Find forum channel and thread
+        guild = None
+        for g in bot.guilds:
+            guild = g
+            break
+        
+        if not guild:
+            print("[FORUM UPDATE] Could not find guild")
+            return
+        
+        forum_channel = guild.get_channel(FORUM_CHANNEL_ID)
+        if not forum_channel:
+            print(f"[FORUM UPDATE] Could not find forum channel {FORUM_CHANNEL_ID}")
+            return
+        
+        try:
+            thread = await guild.fetch_channel(int(forum_thread_id))
+        except Exception as e:
+            print(f"[FORUM UPDATE] Could not fetch thread {forum_thread_id}: {e}")
+            return
+        
+        if not thread:
+            print(f"[FORUM UPDATE] Thread {forum_thread_id} not found")
+            return
+        
+        # Create updated embed
+        character_name = character_data.get('full_name', f'Character {user_id}')
+        updated_embed = discord.Embed(
+            title=f"Approved Character: {character_name}",
+            color=0x2ECC71
+        )
+        
+        updated_embed.add_field(name="Full Legal Name", value=character_data.get('full_name', 'N/A'), inline=False)
+        updated_embed.add_field(name="Date of Birth", value=character_data.get('dob', 'N/A'), inline=True)
+        updated_embed.add_field(name="County", value=character_data.get('county', 'N/A'), inline=True)
+        updated_embed.add_field(name="House District", value=character_data.get('house', 'N/A'), inline=True)
+        updated_embed.add_field(name="Senate District", value=character_data.get('senate', 'N/A'), inline=True)
+        updated_embed.add_field(name="Gender", value=character_data.get('gender', 'N/A'), inline=True)
+        updated_embed.add_field(name="Political Party", value=character_data.get('party', 'N/A'), inline=True)
+        updated_embed.add_field(name="Position Applied For", value=character_data.get('role', 'N/A'), inline=True)
+        updated_embed.add_field(name="Roblox User ID", value=character_data.get('roblox_id', 'N/A'), inline=True)
+        
+        bio = character_data.get('bio', 'N/A')
+        if len(bio) > 1024:
+            bio = bio[:1021] + "..."
+        updated_embed.add_field(name="Biography", value=bio, inline=False)
+        
+        portrait_url = character_data.get('portrait_url')
+        if portrait_url:
+            updated_embed.set_image(url=portrait_url)
+        
+        # Find and update the first message in the thread
+        async for msg in thread.history(limit=1, oldest_first=True):
+            try:
+                await msg.edit(embed=updated_embed)
+                print(f"✅ Updated forum thread {forum_thread_id} for user {user_id}")
+            except Exception as edit_exc:
+                print(f"[FORUM UPDATE ERROR] Could not edit message: {edit_exc}")
+            break
+        
+    except Exception as e:
+        print(f"[FORUM UPDATE ERROR] {e}")
+
 class EditFieldModal(discord.ui.Modal):
-    def __init__(self, field_name, title, user_id, character_data, collection_name="pending_applications", max_length=100):
+    def __init__(self, field_name, title, user_id, character_data, collection_name="pending_applications", max_length=100, bot=None):
         super().__init__(title=title)
         self.field_name = field_name
         self.user_id = user_id
         self.character_data = character_data
         self.collection_name = collection_name
+        self.bot = bot
         
         self.field_input = discord.ui.TextInput(
             label=f"New {field_name.replace('_', ' ').title()}",
@@ -57,17 +142,64 @@ class EditFieldModal(discord.ui.Modal):
                 doc_ref = db.collection(self.collection_name).document(self.user_id)
                 doc_ref.update({self.field_name: new_value})
                 await interaction.response.send_message(f"Updated {self.field_name} to: {new_value}", ephemeral=True)
+                
+                # Update forum thread if this is an approved character
+                if self.collection_name == "characters" and self.bot:
+                    await update_forum_thread(self.bot, self.user_id, self.character_data)
+                    
             except Exception as e:
                 await interaction.response.send_message(f"Error saving to database: {str(e)}", ephemeral=True)
         else:
             await interaction.response.send_message(f"Updated {self.field_name} locally to: {new_value} (database not available)", ephemeral=True)
 
+class EditPortraitModal(discord.ui.Modal):
+    def __init__(self, user_id, character_data, collection_name="pending_applications", bot=None):
+        super().__init__(title="Edit Portrait")
+        self.user_id = user_id
+        self.character_data = character_data
+        self.collection_name = collection_name
+        self.bot = bot
+        
+        self.portrait_url_input = discord.ui.TextInput(
+            label="Portrait URL",
+            default=character_data.get('portrait_url', ''),
+            max_length=500,
+            required=False,
+            placeholder="Enter image URL or leave blank to keep current"
+        )
+        self.add_item(self.portrait_url_input)
+    
+    async def on_submit(self, interaction: discord.Interaction):
+        portrait_url = str(self.portrait_url_input).strip() if str(self.portrait_url_input).strip() else None
+        
+        if portrait_url:
+            self.character_data['portrait_url'] = portrait_url
+            
+            # Save to database immediately
+            if db:
+                try:
+                    doc_ref = db.collection(self.collection_name).document(self.user_id)
+                    doc_ref.update({'portrait_url': portrait_url})
+                    await interaction.response.send_message(f"✅ Portrait updated successfully!", ephemeral=True)
+                    
+                    # Update forum thread if this is an approved character
+                    if self.collection_name == "characters" and self.bot:
+                        await update_forum_thread(self.bot, self.user_id, self.character_data)
+                        
+                except Exception as e:
+                    await interaction.response.send_message(f"❌ Error saving portrait to database: {str(e)}", ephemeral=True)
+            else:
+                await interaction.response.send_message(f"✅ Portrait updated locally (database not available)", ephemeral=True)
+        else:
+            await interaction.response.send_message(f"⚠️ Portrait URL is required to update.", ephemeral=True)
+
 class EditDistrictsModal(discord.ui.Modal):
-    def __init__(self, user_id, character_data, collection_name="pending_applications"):
+    def __init__(self, user_id, character_data, collection_name="pending_applications", bot=None):
         super().__init__(title="Edit Districts")
         self.user_id = user_id
         self.character_data = character_data
         self.collection_name = collection_name
+        self.bot = bot
         
         self.house_input = discord.ui.TextInput(
             label="House District",
@@ -97,6 +229,11 @@ class EditDistrictsModal(discord.ui.Modal):
                 doc_ref = db.collection(self.collection_name).document(self.user_id)
                 doc_ref.update({'house': house_value, 'senate': senate_value})
                 await interaction.response.send_message(f"Updated districts - House: {house_value}, Senate: {senate_value}", ephemeral=True)
+                
+                # Update forum thread if this is an approved character
+                if self.collection_name == "characters" and self.bot:
+                    await update_forum_thread(self.bot, self.user_id, self.character_data)
+                    
             except Exception as e:
                 await interaction.response.send_message(f"Error saving to database: {str(e)}", ephemeral=True)
         else:
@@ -489,7 +626,7 @@ class Character(commands.Cog):
                                     member = None
                             # --- END FIX ---
                             if member:
-                                role = guild.get_role(1338209827330986046)
+                                role = guild.get_role(1486597518954332283)
                                 if role:
                                     await member.add_roles(role, reason="Character application approved")
                             try:
@@ -567,6 +704,16 @@ class Character(commands.Cog):
                                         embed=forum_embed
                                     )
                                     print(f"✅ Created forum thread for approved character: {character_name}")
+                                    
+                                    # Save forum thread ID to database
+                                    if db:
+                                        try:
+                                            db.collection('characters').document(str(self.user_id)).update({
+                                                'forum_thread_id': str(thread.id)
+                                            })
+                                            print(f"✅ Saved forum thread ID {thread.id} to database")
+                                        except Exception as db_exc:
+                                            print(f"[DATABASE ERROR] Could not save forum thread ID: {db_exc}")
                                     
                                 except Exception as forum_exc:
                                     print(f"[FORUM ERROR] Could not create forum post: {forum_exc}")
@@ -743,37 +890,42 @@ class Character(commands.Cog):
             edit_embed.add_field(name="Biography", value=bio, inline=False)
             
             class EditPendingView(discord.ui.View):
-                def __init__(self, timeout=600):
+                def __init__(self, bot, timeout=600):
                     super().__init__(timeout=timeout)
                     self.user_id = user_id
                     self.character_data = character_data
+                    self.bot = bot
                     
                 @discord.ui.button(label="Edit Name", style=discord.ButtonStyle.primary)
                 async def edit_name(self, interaction: discord.Interaction, button: discord.ui.Button):
-                    await interaction.response.send_modal(EditFieldModal("full_name", "Edit Full Name", self.user_id, self.character_data, "pending_applications"))
+                    await interaction.response.send_modal(EditFieldModal("full_name", "Edit Full Name", self.user_id, self.character_data, "pending_applications", bot=self.bot))
                 
                 @discord.ui.button(label="Edit DOB", style=discord.ButtonStyle.primary)
                 async def edit_dob(self, interaction: discord.Interaction, button: discord.ui.Button):
-                    await interaction.response.send_modal(EditFieldModal("dob", "Edit Date of Birth (MM/DD/YYYY)", self.user_id, self.character_data, "pending_applications"))
+                    await interaction.response.send_modal(EditFieldModal("dob", "Edit Date of Birth (MM/DD/YYYY)", self.user_id, self.character_data, "pending_applications", bot=self.bot))
                 
                 @discord.ui.button(label="Edit County", style=discord.ButtonStyle.primary)
                 async def edit_county(self, interaction: discord.Interaction, button: discord.ui.Button):
-                    await interaction.response.send_modal(EditFieldModal("county", "Edit County", self.user_id, self.character_data, "pending_applications"))
+                    await interaction.response.send_modal(EditFieldModal("county", "Edit County", self.user_id, self.character_data, "pending_applications", bot=self.bot))
                 
                 @discord.ui.button(label="Edit Districts", style=discord.ButtonStyle.primary)
                 async def edit_districts(self, interaction: discord.Interaction, button: discord.ui.Button):
-                    await interaction.response.send_modal(EditDistrictsModal(self.user_id, self.character_data, "pending_applications"))
+                    await interaction.response.send_modal(EditDistrictsModal(self.user_id, self.character_data, "pending_applications", bot=self.bot))
                 
                 @discord.ui.button(label="Edit Bio", style=discord.ButtonStyle.secondary)
                 async def edit_bio(self, interaction: discord.Interaction, button: discord.ui.Button):
-                    await interaction.response.send_modal(EditFieldModal("bio", "Edit Biography", self.user_id, self.character_data, "pending_applications", max_length=1000))
+                    await interaction.response.send_modal(EditFieldModal("bio", "Edit Biography", self.user_id, self.character_data, "pending_applications", max_length=1000, bot=self.bot))
+                
+                @discord.ui.button(label="Edit Portrait", style=discord.ButtonStyle.secondary)
+                async def edit_portrait(self, interaction: discord.Interaction, button: discord.ui.Button):
+                    await interaction.response.send_modal(EditPortraitModal(self.user_id, self.character_data, "pending_applications", bot=self.bot))
                 
                 @discord.ui.button(label="Close Editor", style=discord.ButtonStyle.secondary)
                 async def close_editor(self, interaction: discord.Interaction, button: discord.ui.Button):
                     await interaction.response.send_message("Character editor closed.", ephemeral=True)
                     await interaction.message.edit(view=None)
             
-            await interaction.response.send_message(embed=edit_embed, view=EditPendingView(), ephemeral=True)
+            await interaction.response.send_message(embed=edit_embed, view=EditPendingView(self.bot), ephemeral=True)
             
         except Exception as e:
             await interaction.response.send_message(f"Error editing pending application: {str(e)}", ephemeral=True)
@@ -820,37 +972,42 @@ class Character(commands.Cog):
             edit_embed.add_field(name="Biography", value=bio, inline=False)
             
             class EditCharacterView(discord.ui.View):
-                def __init__(self, timeout=600):
+                def __init__(self, bot, timeout=600):
                     super().__init__(timeout=timeout)
                     self.user_id = user_id
                     self.character_data = character_data
+                    self.bot = bot
                     
                 @discord.ui.button(label="Edit Name", style=discord.ButtonStyle.primary)
                 async def edit_name(self, interaction: discord.Interaction, button: discord.ui.Button):
-                    await interaction.response.send_modal(EditFieldModal("full_name", "Edit Full Name", self.user_id, self.character_data, "characters"))
+                    await interaction.response.send_modal(EditFieldModal("full_name", "Edit Full Name", self.user_id, self.character_data, "characters", bot=self.bot))
                 
                 @discord.ui.button(label="Edit DOB", style=discord.ButtonStyle.primary)
                 async def edit_dob(self, interaction: discord.Interaction, button: discord.ui.Button):
-                    await interaction.response.send_modal(EditFieldModal("dob", "Edit Date of Birth (MM/DD/YYYY)", self.user_id, self.character_data, "characters"))
+                    await interaction.response.send_modal(EditFieldModal("dob", "Edit Date of Birth (MM/DD/YYYY)", self.user_id, self.character_data, "characters", bot=self.bot))
                 
                 @discord.ui.button(label="Edit County", style=discord.ButtonStyle.primary)
                 async def edit_county(self, interaction: discord.Interaction, button: discord.ui.Button):
-                    await interaction.response.send_modal(EditFieldModal("county", "Edit County", self.user_id, self.character_data, "characters"))
+                    await interaction.response.send_modal(EditFieldModal("county", "Edit County", self.user_id, self.character_data, "characters", bot=self.bot))
                 
                 @discord.ui.button(label="Edit Districts", style=discord.ButtonStyle.primary)
                 async def edit_districts(self, interaction: discord.Interaction, button: discord.ui.Button):
-                    await interaction.response.send_modal(EditDistrictsModal(self.user_id, self.character_data, "characters"))
+                    await interaction.response.send_modal(EditDistrictsModal(self.user_id, self.character_data, "characters", bot=self.bot))
                 
                 @discord.ui.button(label="Edit Bio", style=discord.ButtonStyle.secondary)
                 async def edit_bio(self, interaction: discord.Interaction, button: discord.ui.Button):
-                    await interaction.response.send_modal(EditFieldModal("bio", "Edit Biography", self.user_id, self.character_data, "characters", max_length=1000))
+                    await interaction.response.send_modal(EditFieldModal("bio", "Edit Biography", self.user_id, self.character_data, "characters", max_length=1000, bot=self.bot))
+                
+                @discord.ui.button(label="Edit Portrait", style=discord.ButtonStyle.secondary)
+                async def edit_portrait(self, interaction: discord.Interaction, button: discord.ui.Button):
+                    await interaction.response.send_modal(EditPortraitModal(self.user_id, self.character_data, "characters", bot=self.bot))
                 
                 @discord.ui.button(label="Close Editor", style=discord.ButtonStyle.secondary)
                 async def close_editor(self, interaction: discord.Interaction, button: discord.ui.Button):
                     await interaction.response.send_message("Character editor closed.", ephemeral=True)
                     await interaction.message.edit(view=None)
             
-            await interaction.response.send_message(embed=edit_embed, view=EditCharacterView(), ephemeral=True)
+            await interaction.response.send_message(embed=edit_embed, view=EditCharacterView(self.bot), ephemeral=True)
             
         except Exception as e:
             await interaction.response.send_message(f"Error editing character: {str(e)}", ephemeral=True)
