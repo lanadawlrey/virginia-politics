@@ -645,6 +645,11 @@ class Character(commands.Cog):
                                     pending_doc = pending_ref.get()
                                     if pending_doc.exists:
                                         character_data = pending_doc.to_dict()
+                                        # Generate SSN from Roblox ID
+                                        roblox_id_raw = character_data.get('roblox_id', '')
+                                        roblox_digits = ''.join(filter(str.isdigit, roblox_id_raw))
+                                        roblox_digits = roblox_digits[-9:].rjust(9, '0')
+                                        ssn = f"{roblox_digits[:3]}-{roblox_digits[3:5]}-{roblox_digits[5:]}"
                                         # Update with approval info
                                         character_data.update({
                                             'approved_at': firestore.SERVER_TIMESTAMP,
