@@ -617,39 +617,62 @@ class Character(commands.Cog):
                     message = await mod_channel.send(embed=mod_embed)
                     # Add admin panel buttons for approve/deny
                     class AdminPanel(discord.ui.View):
-                        def __init__(self, user_id, message_id, timeout=604800):  # 7 days
+                        def __init__(self, user_id, message_id, timeout=604800):
                             super().__init__(timeout=timeout)
                             self.user_id = user_id
                             self.message_id = message_id
+
                         @discord.ui.button(label="Approve", style=discord.ButtonStyle.success)
                         async def approve(self, interaction: discord.Interaction, button: discord.ui.Button):
                             await interaction.response.defer(thinking=True)
                             try:
-                                # Only allow admins to approve/deny
                                 if not interaction.user.guild_permissions.manage_guild:
                                     await interaction.followup.send("You do not have permission to approve.", ephemeral=True)
                                     return
+
+                                # Fetch pending application
+                                character_data = None
+                                if db:
+                                    try:
+                                        pending_ref = db.collection('pending_applications').document(str(self.user_id))
+                                        pending_doc = pending_ref.get()
+                                        if not pending_doc.exists:
+                                            await interaction.followup.send("No pending application found for this user.", ephemeral=True)
+                                            return
+                                        character_data = pending_doc.to_dict()
+                                    except Exception as fetch_exc:
+                                        print(f"[FIREBASE ERROR] {fetch_exc}")
+                                        await interaction.followup.send(f"Database error: {fetch_exc}", ephemeral=True)
+                                        return
+                                else:
+                                    await interaction.followup.send("Database not available.", ephemeral=True)
+                                    return
+
                                 guild = interaction.guild
                                 member = guild.get_member(self.user_id)
-                                # --- FIX: Always fetch member if not found in cache ---
                                 if member is None:
                                     try:
                                         member = await guild.fetch_member(self.user_id)
                                     except Exception as fetch_exc:
                                         print(f"[FETCH MEMBER ERROR] Could not fetch member: {fetch_exc}")
                                         member = None
-                                # --- END FIX ---
+
+                                # Add role and set nickname if possible
                                 if member:
-                                    role = guild.get_role(1486597518954332283)
-                                    if role:
-                                        await member.add_roles(role, reason="Character application approved")
-                                    # Set nickname to character full name
+                                    try:
+                                        role = guild.get_role(1486597518954332283)
+                                        if role:
+                                            await member.add_roles(role, reason="Character application approved")
+                                    except Exception as role_exc:
+                                        print(f"[ROLE ERROR] {role_exc}")
                                     try:
                                         character_name = character_data.get('full_name', '')
                                         if character_name:
                                             await member.edit(nick=character_name, reason="Character name set on approval")
                                     except Exception as nick_exc:
                                         print(f"[NICKNAME ERROR] Could not set nickname: {nick_exc}")
+
+                                # Notify user by DM
                                 try:
                                     if member:
                                         await member.send(embed=discord.Embed(
@@ -659,96 +682,66 @@ class Character(commands.Cog):
                                         ))
                                 except Exception as dm_exc:
                                     print(f"[DM ERROR] Could not DM user: {dm_exc}")
-                                # Move from pending to approved collection
-                                if db:
-                                    try:
-                                        pending_ref = db.collection('pending_applications').document(str(self.user_id))
-                                        pending_doc = pending_ref.get()
-                                        if pending_doc.exists:
-                                            character_data = pending_doc.to_dict()
-                                            # Generate SSN from Roblox ID
-                                            roblox_id_raw = character_data.get('roblox_id', '')
-                                            roblox_digits = ''.join(filter(str.isdigit, roblox_id_raw))
-                                            roblox_digits = roblox_digits[-9:].rjust(9, '0')
-                                            ssn = f"{roblox_digits[:3]}-{roblox_digits[3:5]}-{roblox_digits[5:]}"
-                                            # Update with approval info
-                                            character_data.update({
-                                                'approved_at': firestore.SERVER_TIMESTAMP,
-                                                'approved_by': str(interaction.user.id),
-                                                'mod_message_id': str(self.message_id),
-                                                'ssn': ssn  # Add formatted SSN to Firestore
-                                            })
-                                            # Move to main characters collection
-                                            db.collection('characters').document(str(self.user_id)).set(character_data)
-                                            # Delete from pending
-                                            pending_ref.delete()
-                                            print(f"✅ Application moved to characters collection for user {self.user_id}")
-                                    except Exception as firebase_exc:
-                                        print(f"[FIREBASE ERROR] {firebase_exc}")
-                            
-                            # Post approved character to forum channel
-                            forum_channel_id = 1486818607575863417
-                            forum_channel = interaction.guild.get_channel(forum_channel_id)
-                            if forum_channel:
+
+                                # Move to characters collection
                                 try:
-                                    # Create forum post with character name as title
-                                    character_name = character_data.get('full_name', f'Character {self.user_id}')
-                                    
-                                    # Create embed for the forum post
-                                    forum_embed = discord.Embed(
-                                        title=f"Approved Character: {character_name}",
-                                        color=0x2ECC71
-                                    )
-                                    
-                                    # Add character details
-                                    forum_embed.add_field(name="Full Legal Name", value=character_data.get('full_name', 'N/A'), inline=False)
-                                    forum_embed.add_field(name="Date of Birth", value=character_data.get('dob', 'N/A'), inline=True)
-                                    forum_embed.add_field(name="County", value=character_data.get('county', 'N/A'), inline=True)
-                                    forum_embed.add_field(name="House District", value=character_data.get('house', 'N/A'), inline=True)
-                                    forum_embed.add_field(name="Senate District", value=character_data.get('senate', 'N/A'), inline=True)
-                                    forum_embed.add_field(name="Gender", value=character_data.get('gender', 'N/A'), inline=True)
-                                    forum_embed.add_field(name="Political Party", value=character_data.get('party', 'N/A'), inline=True)
-                                    forum_embed.add_field(name="Position Applied For", value=character_data.get('role', 'N/A'), inline=True)
-                                    forum_embed.add_field(name="Roblox User ID", value=character_data.get('roblox_id', 'N/A'), inline=True)
-                                    
-                                    # Add biography (truncated if too long)
-                                    bio = character_data.get('bio', 'N/A')
-                                    if len(bio) > 1024:
-                                        bio = bio[:1021] + "..."
-                                    forum_embed.add_field(name="Biography", value=bio, inline=False)
-                                    
-                                    # Add portrait if available
-                                    portrait_url = character_data.get('portrait_url')
-                                    if portrait_url:
-                                        forum_embed.set_image(url=portrait_url)
-                                    
-                                    forum_embed.set_footer(text=f"Approved by {interaction.user.display_name} • User: {member.mention if member else 'Unknown'}")
-                                    
-                                    # Create the forum thread
-                                    thread = await forum_channel.create_thread(
-                                        name=character_name,
-                                        embed=forum_embed
-                                    )
-                                    print(f"✅ Created forum thread for approved character: {character_name}")
-                                    
-                                    # Save forum thread ID to database
-                                    if db:
-                                        try:
-                                            db.collection('characters').document(str(self.user_id)).update({
-                                                'forum_thread_id': str(thread.id)
-                                            })
-                                            print(f"✅ Saved forum thread ID {thread.id} to database")
-                                        except Exception as db_exc:
-                                            print(f"[DATABASE ERROR] Could not save forum thread ID: {db_exc}")
-                                    
+                                    pending_ref = db.collection('pending_applications').document(str(self.user_id))
+                                    roblox_id_raw = character_data.get('roblox_id', '')
+                                    roblox_digits = ''.join(filter(str.isdigit, roblox_id_raw))
+                                    roblox_digits = roblox_digits[-9:].rjust(9, '0')
+                                    ssn = f"{roblox_digits[:3]}-{roblox_digits[3:5]}-{roblox_digits[5:]}"
+                                    character_data.update({
+                                        'approved_at': firestore.SERVER_TIMESTAMP,
+                                        'approved_by': str(interaction.user.id),
+                                        'mod_message_id': str(self.message_id),
+                                        'ssn': ssn
+                                    })
+                                    db.collection('characters').document(str(self.user_id)).set(character_data)
+                                    pending_ref.delete()
+                                except Exception as firebase_exc:
+                                    print(f"[FIREBASE ERROR] {firebase_exc}")
+
+                                # Post to forum channel
+                                try:
+                                    forum_channel = interaction.guild.get_channel(FORUM_CHANNEL_ID)
+                                    if forum_channel:
+                                        character_name = character_data.get('full_name', f'Character {self.user_id}')
+                                        forum_embed = discord.Embed(title=f"Approved Character: {character_name}", color=0x2ECC71)
+                                        forum_embed.add_field(name="Full Legal Name", value=character_data.get('full_name', 'N/A'), inline=False)
+                                        forum_embed.add_field(name="Date of Birth", value=character_data.get('dob', 'N/A'), inline=True)
+                                        forum_embed.add_field(name="County", value=character_data.get('county', 'N/A'), inline=True)
+                                        forum_embed.add_field(name="House District", value=character_data.get('house', 'N/A'), inline=True)
+                                        forum_embed.add_field(name="Senate District", value=character_data.get('senate', 'N/A'), inline=True)
+                                        forum_embed.add_field(name="Gender", value=character_data.get('gender', 'N/A'), inline=True)
+                                        forum_embed.add_field(name="Political Party", value=character_data.get('party', 'N/A'), inline=True)
+                                        forum_embed.add_field(name="Position Applied For", value=character_data.get('role', 'N/A'), inline=True)
+                                        forum_embed.add_field(name="Roblox User ID", value=character_data.get('roblox_id', 'N/A'), inline=True)
+                                        bio = character_data.get('bio', 'N/A')
+                                        if len(bio) > 1024:
+                                            bio = bio[:1021] + "..."
+                                        forum_embed.add_field(name="Biography", value=bio, inline=False)
+                                        portrait_url = character_data.get('portrait_url')
+                                        if portrait_url:
+                                            forum_embed.set_image(url=portrait_url)
+                                        forum_embed.set_footer(text=f"Approved by {interaction.user.display_name} • User: {member.mention if member else 'Unknown'}")
+                                        thread = await forum_channel.create_thread(name=character_name, embed=forum_embed)
+                                        if db:
+                                            try:
+                                                db.collection('characters').document(str(self.user_id)).update({'forum_thread_id': str(thread.id)})
+                                            except Exception as db_exc:
+                                                print(f"[DATABASE ERROR] Could not save forum thread ID: {db_exc}")
                                 except Exception as forum_exc:
                                     print(f"[FORUM ERROR] Could not create forum post: {forum_exc}")
-                            
+
                                 await interaction.followup.send("✅ Application approved, user notified, character posted to forum, and data moved to Firebase.", ephemeral=True)
                                 await interaction.message.edit(view=None)
                             except Exception as e:
                                 print(f"[APPROVE ERROR] {e}")
-                                await interaction.followup.send(f"❌ Error during approval: {str(e)}", ephemeral=True)
+                                try:
+                                    await interaction.followup.send(f"❌ Error during approval: {str(e)}", ephemeral=True)
+                                except Exception:
+                                    pass
+
                         @discord.ui.button(label="Deny", style=discord.ButtonStyle.danger)
                         async def deny(self, interaction: discord.Interaction, button: discord.ui.Button):
                             await interaction.response.defer(thinking=True)
@@ -756,16 +749,15 @@ class Character(commands.Cog):
                                 if not interaction.user.guild_permissions.manage_guild:
                                     await interaction.followup.send("You do not have permission to deny.", ephemeral=True)
                                     return
+                                # Attempt to fetch member
                                 guild = interaction.guild
                                 member = guild.get_member(self.user_id)
-                                # --- FIX: Always fetch member if not found in cache ---
                                 if member is None:
                                     try:
                                         member = await guild.fetch_member(self.user_id)
                                     except Exception as fetch_exc:
                                         print(f"[FETCH MEMBER ERROR] Could not fetch member: {fetch_exc}")
                                         member = None
-                                # --- END FIX ---
                                 try:
                                     if member:
                                         await member.send(embed=discord.Embed(
@@ -775,19 +767,22 @@ class Character(commands.Cog):
                                         ))
                                 except Exception as dm_exc:
                                     print(f"[DM ERROR] Could not DM user: {dm_exc}")
-                                # Delete from pending applications
+                                # Delete pending application if present
                                 if db:
                                     try:
                                         pending_ref = db.collection('pending_applications').document(str(self.user_id))
                                         pending_ref.delete()
-                                        print(f"✅ Pending application deleted for user {self.user_id}")
                                     except Exception as firebase_exc:
                                         print(f"[FIREBASE ERROR] {firebase_exc}")
                                 await interaction.followup.send("✅ Application denied and user notified.", ephemeral=True)
                                 await interaction.message.edit(view=None)
                             except Exception as e:
                                 print(f"[DENY ERROR] {e}")
-                                await interaction.followup.send(f"❌ Error during denial: {str(e)}", ephemeral=True)
+                                try:
+                                    await interaction.followup.send(f"❌ Error during denial: {str(e)}", ephemeral=True)
+                                except Exception:
+                                    pass
+
                     admin_panel = AdminPanel(user.id, message.id)
                     await message.edit(view=admin_panel)
                     # Send success message to user after submission
