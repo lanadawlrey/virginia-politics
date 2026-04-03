@@ -5,6 +5,7 @@ import os
 from dotenv import load_dotenv
 import firebase_admin
 from firebase_admin import credentials, firestore
+import asyncio
 
 load_dotenv()
 MOD_CHANNEL_ID_STR = os.getenv("MOD_CHANNEL_ID")
@@ -91,7 +92,6 @@ async def update_forum_thread(bot, user_id, character_data):
         updated_embed.add_field(name="Senate District", value=character_data.get('senate', 'N/A'), inline=True)
         updated_embed.add_field(name="Gender", value=character_data.get('gender', 'N/A'), inline=True)
         updated_embed.add_field(name="Political Party", value=character_data.get('party', 'N/A'), inline=True)
-        updated_embed.add_field(name="Position Applied For", value=character_data.get('role', 'N/A'), inline=True)
         updated_embed.add_field(name="Roblox User ID", value=character_data.get('roblox_id', 'N/A'), inline=True)
         
         bio = character_data.get('bio', 'N/A')
@@ -135,7 +135,7 @@ class EditFieldModal(discord.ui.Modal):
     async def on_submit(self, interaction: discord.Interaction):
         await interaction.response.defer()
         try:
-            new_value = str(self.field_input)
+            new_value = self.field_input.value.strip()
             self.character_data[self.field_name] = new_value
             
             # Save to database immediately
@@ -176,7 +176,8 @@ class EditPortraitModal(discord.ui.Modal):
     async def on_submit(self, interaction: discord.Interaction):
         await interaction.response.defer()
         try:
-            portrait_url = str(self.portrait_url_input).strip() if str(self.portrait_url_input).strip() else None
+            raw_portrait = self.portrait_url_input.value.strip()
+            portrait_url = raw_portrait if raw_portrait else None
             
             if portrait_url:
                 self.character_data['portrait_url'] = portrait_url
@@ -227,8 +228,8 @@ class EditDistrictsModal(discord.ui.Modal):
     async def on_submit(self, interaction: discord.Interaction):
         await interaction.response.defer()
         try:
-            house_value = str(self.house_input)
-            senate_value = str(self.senate_input)
+            house_value = self.house_input.value.strip()
+            senate_value = self.senate_input.value.strip()
             
             self.character_data['house'] = house_value
             self.character_data['senate'] = senate_value
@@ -714,7 +715,7 @@ class Character(commands.Cog):
                                         forum_embed.add_field(name="Senate District", value=character_data.get('senate', 'N/A'), inline=True)
                                         forum_embed.add_field(name="Gender", value=character_data.get('gender', 'N/A'), inline=True)
                                         forum_embed.add_field(name="Political Party", value=character_data.get('party', 'N/A'), inline=True)
-                                        forum_embed.add_field(name="Position Applied For", value=character_data.get('role', 'N/A'), inline=True)
+                                        # Intentionally omit the applied position from public forum posts
                                         forum_embed.add_field(name="Roblox User ID", value=character_data.get('roblox_id', 'N/A'), inline=True)
                                         bio = character_data.get('bio', 'N/A')
                                         if len(bio) > 1024:
@@ -940,6 +941,22 @@ class Character(commands.Cog):
                 @discord.ui.button(label="Edit Districts", style=discord.ButtonStyle.primary)
                 async def edit_districts(self, interaction: discord.Interaction, button: discord.ui.Button):
                     await interaction.response.send_modal(EditDistrictsModal(self.user_id, self.character_data, "pending_applications", bot=self.bot))
+
+                @discord.ui.button(label="Edit Gender", style=discord.ButtonStyle.primary)
+                async def edit_gender(self, interaction: discord.Interaction, button: discord.ui.Button):
+                    await interaction.response.send_modal(EditFieldModal("gender", "Edit Gender", self.user_id, self.character_data, "pending_applications", bot=self.bot))
+
+                @discord.ui.button(label="Edit Party", style=discord.ButtonStyle.primary)
+                async def edit_party(self, interaction: discord.Interaction, button: discord.ui.Button):
+                    await interaction.response.send_modal(EditFieldModal("party", "Edit Political Party", self.user_id, self.character_data, "pending_applications", bot=self.bot))
+
+                @discord.ui.button(label="Edit Role", style=discord.ButtonStyle.primary)
+                async def edit_role(self, interaction: discord.Interaction, button: discord.ui.Button):
+                    await interaction.response.send_modal(EditFieldModal("role", "Edit Position Applied For", self.user_id, self.character_data, "pending_applications", bot=self.bot))
+
+                @discord.ui.button(label="Edit Roblox ID", style=discord.ButtonStyle.primary)
+                async def edit_roblox(self, interaction: discord.Interaction, button: discord.ui.Button):
+                    await interaction.response.send_modal(EditFieldModal("roblox_id", "Edit Roblox User ID", self.user_id, self.character_data, "pending_applications", bot=self.bot))
                 
                 @discord.ui.button(label="Edit Bio", style=discord.ButtonStyle.secondary)
                 async def edit_bio(self, interaction: discord.Interaction, button: discord.ui.Button):
@@ -1022,6 +1039,22 @@ class Character(commands.Cog):
                 @discord.ui.button(label="Edit Districts", style=discord.ButtonStyle.primary)
                 async def edit_districts(self, interaction: discord.Interaction, button: discord.ui.Button):
                     await interaction.response.send_modal(EditDistrictsModal(self.user_id, self.character_data, "characters", bot=self.bot))
+
+                @discord.ui.button(label="Edit Gender", style=discord.ButtonStyle.primary)
+                async def edit_gender(self, interaction: discord.Interaction, button: discord.ui.Button):
+                    await interaction.response.send_modal(EditFieldModal("gender", "Edit Gender", self.user_id, self.character_data, "characters", bot=self.bot))
+
+                @discord.ui.button(label="Edit Party", style=discord.ButtonStyle.primary)
+                async def edit_party(self, interaction: discord.Interaction, button: discord.ui.Button):
+                    await interaction.response.send_modal(EditFieldModal("party", "Edit Political Party", self.user_id, self.character_data, "characters", bot=self.bot))
+
+                @discord.ui.button(label="Edit Role", style=discord.ButtonStyle.primary)
+                async def edit_role(self, interaction: discord.Interaction, button: discord.ui.Button):
+                    await interaction.response.send_modal(EditFieldModal("role", "Edit Position", self.user_id, self.character_data, "characters", bot=self.bot))
+
+                @discord.ui.button(label="Edit Roblox ID", style=discord.ButtonStyle.primary)
+                async def edit_roblox(self, interaction: discord.Interaction, button: discord.ui.Button):
+                    await interaction.response.send_modal(EditFieldModal("roblox_id", "Edit Roblox User ID", self.user_id, self.character_data, "characters", bot=self.bot))
                 
                 @discord.ui.button(label="Edit Bio", style=discord.ButtonStyle.secondary)
                 async def edit_bio(self, interaction: discord.Interaction, button: discord.ui.Button):
@@ -1056,7 +1089,7 @@ class Character(commands.Cog):
             pending_doc = pending_ref.get()
             
             if not pending_doc.exists:
-                await interaction.response.send_message(f"No pending application found for user ID: {user_id}", ephemeral=True)
+                await interaction.followup.send(f"No pending application found for user ID: {user_id}", ephemeral=True)
                 return
             
             character_data = pending_doc.to_dict()
@@ -1130,7 +1163,7 @@ class Character(commands.Cog):
                     forum_embed.add_field(name="Senate District", value=character_data.get('senate', 'N/A'), inline=True)
                     forum_embed.add_field(name="Gender", value=character_data.get('gender', 'N/A'), inline=True)
                     forum_embed.add_field(name="Political Party", value=character_data.get('party', 'N/A'), inline=True)
-                    forum_embed.add_field(name="Position Applied For", value=character_data.get('role', 'N/A'), inline=True)
+                    # Intentionally omit the applied position from public forum posts
                     forum_embed.add_field(name="Roblox User ID", value=character_data.get('roblox_id', 'N/A'), inline=True)
                     
                     bio = character_data.get('bio', 'N/A')
@@ -1180,7 +1213,7 @@ class Character(commands.Cog):
             pending_doc = pending_ref.get()
             
             if not pending_doc.exists:
-                await interaction.response.send_message(f"No pending application found for user ID: {user_id}", ephemeral=True)
+                await interaction.followup.send(f"No pending application found for user ID: {user_id}", ephemeral=True)
                 return
             
             # Get the guild member
@@ -1212,6 +1245,148 @@ class Character(commands.Cog):
         except Exception as e:
             await interaction.followup.send(f"❌ Error denying application: {str(e)}", ephemeral=True)
             print(f"[DENY_ID ERROR] {e}")
+
+    @app_commands.command(name="repost_character", description="Repost an approved character to the forum (Admin only)")
+    @app_commands.checks.has_permissions(manage_guild=True)
+    @app_commands.describe(user_id="The Discord user ID of the approved character to repost")
+    async def repost_character(self, interaction: discord.Interaction, user_id: str, archive_old: bool = False, delete_old: bool = False):
+        await interaction.response.defer(thinking=True)
+        try:
+            if not db:
+                await interaction.followup.send("Database not available.", ephemeral=True)
+                return
+            character_ref = db.collection('characters').document(user_id)
+            character_doc = character_ref.get()
+            if not character_doc.exists:
+                await interaction.followup.send(f"No approved character found for user ID: {user_id}", ephemeral=True)
+                return
+            character_data = character_doc.to_dict()
+
+            guild = interaction.guild
+            forum_channel = guild.get_channel(FORUM_CHANNEL_ID)
+            if not forum_channel:
+                await interaction.followup.send("Forum channel not found.", ephemeral=True)
+                return
+            # If an old forum thread exists, optionally archive or delete it
+            old_thread_id = character_data.get('forum_thread_id')
+            if old_thread_id:
+                try:
+                    old_thread = await guild.fetch_channel(int(old_thread_id))
+                    if delete_old:
+                        try:
+                            await old_thread.delete()
+                        except Exception:
+                            pass
+                    elif archive_old:
+                        try:
+                            await old_thread.edit(archived=True)
+                        except Exception:
+                            pass
+                except Exception:
+                    pass
+            character_name = character_data.get('full_name', f'Character {user_id}')
+            forum_embed = discord.Embed(title=f"Approved Character: {character_name}", color=0x2ECC71)
+            forum_embed.add_field(name="Full Legal Name", value=character_data.get('full_name', 'N/A'), inline=False)
+            forum_embed.add_field(name="Date of Birth", value=character_data.get('dob', 'N/A'), inline=True)
+            forum_embed.add_field(name="County", value=character_data.get('county', 'N/A'), inline=True)
+            forum_embed.add_field(name="House District", value=character_data.get('house', 'N/A'), inline=True)
+            forum_embed.add_field(name="Senate District", value=character_data.get('senate', 'N/A'), inline=True)
+            forum_embed.add_field(name="Gender", value=character_data.get('gender', 'N/A'), inline=True)
+            forum_embed.add_field(name="Political Party", value=character_data.get('party', 'N/A'), inline=True)
+            # Do NOT include the applied position in public forum posts
+            forum_embed.add_field(name="Roblox User ID", value=character_data.get('roblox_id', 'N/A'), inline=True)
+            bio = character_data.get('bio', 'N/A')
+            if len(bio) > 1024:
+                bio = bio[:1021] + "..."
+            forum_embed.add_field(name="Biography", value=bio, inline=False)
+            portrait_url = character_data.get('portrait_url')
+            if portrait_url:
+                forum_embed.set_image(url=portrait_url)
+
+            try:
+                thread = await forum_channel.create_thread(name=character_name, embed=forum_embed)
+                db.collection('characters').document(user_id).update({'forum_thread_id': str(thread.id)})
+                await interaction.followup.send(f"✅ Reposted character {character_name} to forum.", ephemeral=True)
+            except Exception as e:
+                await interaction.followup.send(f"❌ Error creating thread: {e}", ephemeral=True)
+
+        except Exception as e:
+            await interaction.followup.send(f"❌ Error reposting character: {e}", ephemeral=True)
+            print(f"[REPOST_CHARACTER ERROR] {e}")
+
+    @app_commands.command(name="repost_all_characters", description="Repost ALL approved characters to the forum (Admin only)")
+    @app_commands.checks.has_permissions(manage_guild=True)
+    async def repost_all_characters(self, interaction: discord.Interaction):
+        await interaction.response.defer(thinking=True)
+        try:
+            if not db:
+                await interaction.followup.send("Database not available.", ephemeral=True)
+                return
+            forum_channel = interaction.guild.get_channel(FORUM_CHANNEL_ID)
+            if not forum_channel:
+                await interaction.followup.send("Forum channel not found.", ephemeral=True)
+                return
+            # Support batching and delays to avoid rate limits
+            # Default batch size and delay can be adjusted when calling the command
+            # NOTE: app_commands does not support optional runtime args here; adjust constants below if needed
+            batch_size = 10
+            delay_seconds = 1.0
+
+            characters_ref = db.collection('characters')
+            docs = characters_ref.stream()
+            success = 0
+            failed = 0
+            batch_count = 0
+            for doc in docs:
+                try:
+                    data = doc.to_dict()
+                    uid = doc.id
+                    name = data.get('full_name', f'Character {uid}')
+                    embed = discord.Embed(title=f"Approved Character: {name}", color=0x2ECC71)
+                    embed.add_field(name="Full Legal Name", value=data.get('full_name', 'N/A'), inline=False)
+                    embed.add_field(name="Date of Birth", value=data.get('dob', 'N/A'), inline=True)
+                    embed.add_field(name="County", value=data.get('county', 'N/A'), inline=True)
+                    embed.add_field(name="House District", value=data.get('house', 'N/A'), inline=True)
+                    embed.add_field(name="Senate District", value=data.get('senate', 'N/A'), inline=True)
+                    embed.add_field(name="Gender", value=data.get('gender', 'N/A'), inline=True)
+                    embed.add_field(name="Political Party", value=data.get('party', 'N/A'), inline=True)
+                    # Do NOT include the applied position in public forum posts
+                    embed.add_field(name="Roblox User ID", value=data.get('roblox_id', 'N/A'), inline=True)
+                    bio = data.get('bio', 'N/A')
+                    if len(bio) > 1024:
+                        bio = bio[:1021] + "..."
+                    embed.add_field(name="Biography", value=bio, inline=False)
+                    portrait_url = data.get('portrait_url')
+                    if portrait_url:
+                        embed.set_image(url=portrait_url)
+                    # Archive/delete previous thread if present on each character
+                    old_thread_id = data.get('forum_thread_id')
+                    if old_thread_id:
+                        try:
+                            old_thread = await interaction.guild.fetch_channel(int(old_thread_id))
+                            try:
+                                await old_thread.edit(archived=True)
+                            except Exception:
+                                pass
+                        except Exception:
+                            pass
+
+                    thread = await forum_channel.create_thread(name=name, embed=embed)
+                    db.collection('characters').document(uid).update({'forum_thread_id': str(thread.id)})
+                    success += 1
+                    batch_count += 1
+                    if batch_count >= batch_size:
+                        await asyncio.sleep(delay_seconds)
+                        batch_count = 0
+                except Exception as e:
+                    print(f"[REPOST ALL ERROR] Failed for {doc.id}: {e}")
+                    failed += 1
+
+            await interaction.followup.send(f"✅ Repost complete. Success: {success}. Failed: {failed}.", ephemeral=True)
+
+        except Exception as e:
+            await interaction.followup.send(f"❌ Error reposting all characters: {e}", ephemeral=True)
+            print(f"[REPOST_ALL ERROR] {e}")
 
 async def setup(bot):
     await bot.add_cog(Character(bot))
